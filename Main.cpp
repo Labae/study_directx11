@@ -27,6 +27,10 @@ ID3D11Device* g_pDevice = nullptr;
 ID3D11DeviceContext* g_pImmediateContext = nullptr;
 IDXGISwapChain* g_pSwapChain = nullptr;
 ID3D11RenderTargetView* g_pRenterTargetView = nullptr;
+ID3D11VertexShader* g_pVertexShader = nullptr;
+ID3D11InputLayout* g_pVertexLayout = nullptr;
+ID3D11PixelShader* g_pPixelShader = nullptr;
+ID3D11Buffer* g_pVertexBuffer = nullptr;
 
 
 //--------------------------------------------------------------------------------------
@@ -137,7 +141,27 @@ HRESULT CompileShaderFromFile(LPCTSTR szFileName, LPCSTR szEntryPoint, LPCSTR sz
 	dwShaderFlags |= D3DCOMPILE_DEBUG;
 #endif
 
-	return hr;
+	ID3DBlob* pErrorBlob;
+	hr = D3DCompileFromFile(szFileName, nullptr, nullptr, szEntryPoint, szShaderModel, dwShaderFlags, 0, ppBlobOut, &pErrorBlob);
+	if (FAILED(hr))
+	{
+		if (pErrorBlob != nullptr)
+		{
+			OutputDebugStringA(static_cast<LPCSTR>(pErrorBlob->GetBufferPointer()));
+		}
+		else
+		{
+			pErrorBlob->Release();
+		}
+		return hr;
+	}
+
+	if (pErrorBlob)
+	{
+		pErrorBlob->Release();
+	}
+
+	return S_OK;
 }
 
 HRESULT InitDevice()
@@ -253,6 +277,87 @@ HRESULT InitDevice()
 	// compile the vertex shader
 	ID3DBlob* pVSBlob = nullptr;
 	hr = CompileShaderFromFile(L"Tutorial02.fx", "VS", "vs_4_0", &pVSBlob);
+	if (FAILED(hr))
+	{
+		MessageBox(nullptr, L"The FX file cannot be compiled. Please run this executable from the directory that contains the FX file.",
+			L"Error", MB_OK);
+		return hr;
+	}
+
+	// create the vertex shader
+	hr = g_pDevice->CreateVertexShader(pVSBlob->GetBufferPointer(), pVSBlob->GetBufferSize(), nullptr, &g_pVertexShader);
+	if (FAILED(hr))
+	{
+		pVSBlob->Release();
+		return hr;
+	}
+
+	// define the input layout
+	D3D11_INPUT_ELEMENT_DESC layout[] =
+	{
+		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+	};
+	constexpr UINT numElements = ARRAYSIZE(layout);
+
+	// create the input layout
+	hr = g_pDevice->CreateInputLayout(layout, numElements, pVSBlob->GetBufferPointer(), pVSBlob->GetBufferSize(), &g_pVertexLayout);
+	pVSBlob->Release();
+	if (FAILED(hr))
+	{
+		return hr;
+	}
+
+	// set the input layout
+	g_pImmediateContext->IASetInputLayout(g_pVertexLayout);
+
+	// compile the pixel shader
+	ID3DBlob* pPSBlob = nullptr;
+	hr = CompileShaderFromFile(L"Tutorial02.fx", "PS", "ps_4_0", &pPSBlob);
+	if (FAILED(hr))
+	{
+		MessageBox(nullptr, L"The FX file cannot be compiled. Please run this executable from the directory that contains the FX file.",
+			L"Error", MB_OK);
+		return hr;
+	}
+
+	// create the pixel shader
+	hr = g_pDevice->CreatePixelShader(pPSBlob->GetBufferPointer(), pPSBlob->GetBufferSize(), nullptr, &g_pPixelShader);
+	pPSBlob->Release();
+	if (FAILED(hr))
+	{
+		return hr;
+	}
+
+	// create vertex buffer
+	SimpleVertex vertices[] =
+	{
+		XMFLOAT3(0.0f, 0.5f, 0.5f),
+		XMFLOAT3(0.5f, -0.5f, 0.5f),
+		XMFLOAT3(-0.5f, -0.5f, 0.5f),
+	};
+	D3D11_BUFFER_DESC bd;
+	ZeroMemory(&bd, sizeof(D3D11_BUFFER_DESC));
+	bd.Usage = D3D11_USAGE_DEFAULT;
+	bd.ByteWidth = sizeof(SimpleVertex) * 3;
+	bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
+	bd.CPUAccessFlags = 0;
+
+	D3D11_SUBRESOURCE_DATA initData;
+	ZeroMemory(&initData, sizeof(D3D11_SUBRESOURCE_DATA));
+	initData.pSysMem = vertices;
+	hr = g_pDevice->CreateBuffer(&bd, &initData, &g_pVertexBuffer);
+	if (FAILED(hr))
+	{
+		return hr;
+	}
+
+	// set vertex buffer
+	UINT stride = sizeof(SimpleVertex);
+	UINT offset = 0;
+	g_pImmediateContext->IASetVertexBuffers(0, 1, &g_pVertexBuffer, &stride, &offset);
+
+	// set primitive topology
+	g_pImmediateContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
 
 	return S_OK;
 }
@@ -282,6 +387,11 @@ void Render()
 {
 	constexpr float clearColor[4] = { 0.0f, 0.125f,0.3f,1.0f };
 	g_pImmediateContext->ClearRenderTargetView(g_pRenterTargetView, clearColor);
+
+	g_pImmediateContext->VSSetShader(g_pVertexShader, nullptr, 0);
+	g_pImmediateContext->PSSetShader(g_pPixelShader, nullptr, 0);
+	g_pImmediateContext->Draw(3, 0);
+
 	g_pSwapChain->Present(0, 0);
 }
 
@@ -290,6 +400,23 @@ void CleanupDevice()
 	if (g_pImmediateContext)
 	{
 		g_pImmediateContext->ClearState();
+	}
+
+	if (g_pVertexBuffer)
+	{
+		g_pVertexBuffer->Release();
+	}
+	if (g_pVertexLayout)
+	{
+		g_pVertexLayout->Release();
+	}
+	if (g_pVertexShader)
+	{
+		g_pVertexShader->Release();
+	}
+	if (g_pPixelShader)
+	{
+		g_pPixelShader->Release();
 	}
 	if (g_pRenterTargetView)
 	{
