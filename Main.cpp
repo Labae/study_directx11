@@ -142,7 +142,17 @@ HRESULT CompileShaderFromFile(LPCTSTR szFileName, LPCSTR szEntryPoint, LPCSTR sz
 #endif
 
 	ID3DBlob* pErrorBlob;
-	hr = D3DCompileFromFile(szFileName, nullptr, nullptr, szEntryPoint, szShaderModel, dwShaderFlags, 0, ppBlobOut, &pErrorBlob);
+	hr = D3DCompileFromFile(
+		szFileName,						// 파일명
+		nullptr,						// 매크로 정의
+		nullptr,						// Include 파일 정의
+		szEntryPoint,					// 셰이더 Entry point 이름(메인 함수 이름)
+		szShaderModel,					// 셰이더 컴파일 버전(vs_4_0 = Vertex shader version 4.0)
+		dwShaderFlags,					// 컴파일 옵션
+		0,								// 이펙트 컴파일 옵션
+		ppBlobOut,						// 컴파일 된 Byte코드
+		&pErrorBlob						// 에러 메세지
+	);
 	if (FAILED(hr))
 	{
 		if (pErrorBlob != nullptr)
@@ -251,8 +261,7 @@ HRESULT InitDevice()
 		pBackBuffer,			// View에서 접근할 리소스
 		nullptr,				// RTV 정의
 		&g_pRenterTargetView);	// RTV를 받아올 변수
-
-	// 사용한 back buffer를 
+	// 사용한 back buffer를 Release 
 	pBackBuffer->Release();
 	if (FAILED(hr))
 	{
@@ -292,10 +301,17 @@ HRESULT InitDevice()
 		return hr;
 	}
 
-	// define the input layout
+	// define the input layout (정점 데이터를 GPU에게 알려주는 구조체)
 	D3D11_INPUT_ELEMENT_DESC layout[] =
 	{
-		{"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+		{"POSITION",					// Element의 목적이 무엇인이 알려주는 문자열 (POSITION, NORMAL, ...)
+		0,								// 동일한 Element의 목적을 가진 정점의 Index
+		DXGI_FORMAT_R32G32B32_FLOAT,	// 자료형
+		0,								// 정점 버퍼 슬롯 index
+		0,								// 정점 버퍼 offset
+		D3D11_INPUT_PER_VERTEX_DATA,	// D3D11_INPUT_PER_VERTEX_DATA를 사용함.
+		0								// Instancing에 사용됨
+		},
 	};
 	constexpr UINT numElements = ARRAYSIZE(layout);
 
@@ -329,7 +345,7 @@ HRESULT InitDevice()
 	}
 
 	// create vertex buffer
-	SimpleVertex vertices[] =
+	constexpr SimpleVertex vertices[] =
 	{
 		XMFLOAT3(0.0f, 0.5f, 0.5f),
 		XMFLOAT3(0.5f, -0.5f, 0.5f),
@@ -337,14 +353,14 @@ HRESULT InitDevice()
 	};
 	D3D11_BUFFER_DESC bd;
 	ZeroMemory(&bd, sizeof(D3D11_BUFFER_DESC));
-	bd.Usage = D3D11_USAGE_DEFAULT;
-	bd.ByteWidth = sizeof(SimpleVertex) * 3;
-	bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-	bd.CPUAccessFlags = 0;
+	bd.Usage = D3D11_USAGE_DEFAULT;				// default로 사용
+	bd.ByteWidth = sizeof(SimpleVertex) * 3;	// vertex 3개
+	bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;	// vertex buffer로 바인드
+	bd.CPUAccessFlags = 0;						// cpu access하지 않음.
 
 	D3D11_SUBRESOURCE_DATA initData;
 	ZeroMemory(&initData, sizeof(D3D11_SUBRESOURCE_DATA));
-	initData.pSysMem = vertices;
+	initData.pSysMem = vertices;	// 버퍼 데티
 	hr = g_pDevice->CreateBuffer(&bd, &initData, &g_pVertexBuffer);
 	if (FAILED(hr))
 	{
