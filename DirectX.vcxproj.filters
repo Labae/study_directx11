@@ -26,5 +26,11 @@
     <FxCompile Include="Tutorial02.fx">
       <Filter>Shaders</Filter>
     </FxCompile>
+    <FxCompile Include="Tutorial04.fx">
+      <Filter>Shaders</Filter>
+    </FxCompile>
+    <FxCompile Include="Tutorial06.fx">
+      <Filter>Shaders</Filter>
+    </FxCompile>
   </ItemGroup>
 </Project>

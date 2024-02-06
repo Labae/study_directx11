@@ -14,6 +14,17 @@ using namespace DirectX;
 struct SimpleVertex
 {
 	XMFLOAT3 Pos;
+	XMFLOAT3 Normal;
+};
+
+struct ConstantBuffer
+{
+	XMMATRIX mWorld;
+	XMMATRIX mView;
+	XMMATRIX mProjection;
+	XMFLOAT4 vLightDir[2];
+	XMFLOAT4 vLightColor[2];
+	XMFLOAT4 vOutputColor;
 };
 
 //--------------------------------------------------------------------------------------
@@ -27,11 +38,18 @@ ID3D11Device* g_pDevice = nullptr;
 ID3D11DeviceContext* g_pImmediateContext = nullptr;
 IDXGISwapChain* g_pSwapChain = nullptr;
 ID3D11RenderTargetView* g_pRenterTargetView = nullptr;
+ID3D11Texture2D* g_pDepthStencil = nullptr;
+ID3D11DepthStencilView* g_pDepthStencilView = nullptr;
 ID3D11VertexShader* g_pVertexShader = nullptr;
 ID3D11InputLayout* g_pVertexLayout = nullptr;
 ID3D11PixelShader* g_pPixelShader = nullptr;
+ID3D11PixelShader* g_pSolidPixelShader = nullptr;
 ID3D11Buffer* g_pVertexBuffer = nullptr;
-
+ID3D11Buffer* g_pIndexBuffer = nullptr;
+ID3D11Buffer* g_pConstantBuffer = nullptr;
+XMMATRIX g_World;
+XMMATRIX g_View;
+XMMATRIX g_Projection;
 
 //--------------------------------------------------------------------------------------
 // Forward declarations
@@ -132,7 +150,7 @@ HRESULT CompileShaderFromFile(LPCTSTR szFileName, LPCSTR szEntryPoint, LPCSTR sz
 {
 	HRESULT hr = S_OK;
 
-	DWORD dwShaderFlags = D3DCOMPILE_ENABLE_STRICTNESS;
+	DWORD dwShaderFlags = D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR;
 #if defined( DEBUG ) || defined( _DEBUG )
 	// Set the D3DCOMPILE_DEBUG flag to embed debug information in the shaders.
 	// Setting this flag improves the shader debugging experience, but still allows 
@@ -268,10 +286,40 @@ HRESULT InitDevice()
 		return hr;
 	}
 
+	D3D11_TEXTURE2D_DESC depthTex;
+	ZeroMemory(&depthTex, sizeof(D3D11_TEXTURE2D_DESC));
+	depthTex.Width = width;
+	depthTex.Height = height;
+	depthTex.MipLevels = 1;
+	depthTex.ArraySize = 1;
+	depthTex.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+	depthTex.SampleDesc.Count = 1;
+	depthTex.SampleDesc.Quality = 0;
+	depthTex.Usage = D3D11_USAGE_DEFAULT;
+	depthTex.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+	depthTex.CPUAccessFlags = 0;
+	depthTex.MiscFlags = 0;
+	hr = g_pDevice->CreateTexture2D(&depthTex, nullptr, &g_pDepthStencil);
+	if (FAILED(hr))
+	{
+		return hr;
+	}
+
+	D3D11_DEPTH_STENCIL_VIEW_DESC dsv;
+	ZeroMemory(&dsv, sizeof(D3D11_DEPTH_STENCIL_VIEW_DESC));
+	dsv.Format = depthTex.Format;
+	dsv.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+	dsv.Texture2D.MipSlice = 0;
+	hr = g_pDevice->CreateDepthStencilView(g_pDepthStencil, &dsv, &g_pDepthStencilView);
+	if (FAILED(hr))
+	{
+		return hr;
+	}
+
 	g_pImmediateContext->OMSetRenderTargets(
 		1,						// Render target의 개수(최대 8개)
 		&g_pRenterTargetView,	// Render target view의 배열
-		nullptr					// Depth stencil view 포인터
+		g_pDepthStencilView		// Depth stencil view 포인터
 	);
 
 	D3D11_VIEWPORT vp;
@@ -285,7 +333,7 @@ HRESULT InitDevice()
 
 	// compile the vertex shader
 	ID3DBlob* pVSBlob = nullptr;
-	hr = CompileShaderFromFile(L"Tutorial02.fx", "VS", "vs_4_0", &pVSBlob);
+	hr = CompileShaderFromFile(L"Tutorial06.fx", "VS", "vs_4_0", &pVSBlob);
 	if (FAILED(hr))
 	{
 		MessageBox(nullptr, L"The FX file cannot be compiled. Please run this executable from the directory that contains the FX file.",
@@ -304,14 +352,8 @@ HRESULT InitDevice()
 	// define the input layout (정점 데이터를 GPU에게 알려주는 구조체)
 	D3D11_INPUT_ELEMENT_DESC layout[] =
 	{
-		{"POSITION",					// Element의 목적이 무엇인이 알려주는 문자열 (POSITION, NORMAL, ...)
-		0,								// 동일한 Element의 목적을 가진 정점의 Index
-		DXGI_FORMAT_R32G32B32_FLOAT,	// 자료형
-		0,								// 정점 버퍼 슬롯 index
-		0,								// 정점 버퍼 offset
-		D3D11_INPUT_PER_VERTEX_DATA,	// D3D11_INPUT_PER_VERTEX_DATA를 사용함.
-		0								// Instancing에 사용됨
-		},
+		{"POSITION",0,DXGI_FORMAT_R32G32B32_FLOAT,0,0,D3D11_INPUT_PER_VERTEX_DATA,0},
+		{"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0}
 	};
 	constexpr UINT numElements = ARRAYSIZE(layout);
 
@@ -328,7 +370,7 @@ HRESULT InitDevice()
 
 	// compile the pixel shader
 	ID3DBlob* pPSBlob = nullptr;
-	hr = CompileShaderFromFile(L"Tutorial02.fx", "PS", "ps_4_0", &pPSBlob);
+	hr = CompileShaderFromFile(L"Tutorial06.fx", "PS", "ps_4_0", &pPSBlob);
 	if (FAILED(hr))
 	{
 		MessageBox(nullptr, L"The FX file cannot be compiled. Please run this executable from the directory that contains the FX file.",
@@ -344,17 +386,59 @@ HRESULT InitDevice()
 		return hr;
 	}
 
+	pPSBlob = nullptr;
+	hr = CompileShaderFromFile(L"Tutorial06.fx", "PSSolid", "ps_4_0", &pPSBlob);
+	if (FAILED(hr))
+	{
+		MessageBox(nullptr, L"The FX file cannot be compiled. Please run this executable from the directory that contains the FX file.",
+			L"Error", MB_OK);
+		return hr;
+	}
+
+	hr = g_pDevice->CreatePixelShader(pPSBlob->GetBufferPointer(), pPSBlob->GetBufferSize(), nullptr, &g_pSolidPixelShader);
+	pPSBlob->Release();
+	if (FAILED(hr))
+	{
+		return hr;
+	}
+
 	// create vertex buffer
 	constexpr SimpleVertex vertices[] =
 	{
-		XMFLOAT3(0.0f, 0.5f, 0.5f),
-		XMFLOAT3(0.5f, -0.5f, 0.5f),
-		XMFLOAT3(-0.5f, -0.5f, 0.5f),
+		{ XMFLOAT3(-1.0f, 1.0f, -1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f) },
+		{ XMFLOAT3(1.0f, 1.0f, -1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f) },
+		{ XMFLOAT3(1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f) },
+		{ XMFLOAT3(-1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 1.0f, 0.0f) },
+
+		{ XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f) },
+		{ XMFLOAT3(1.0f, -1.0f, -1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f) },
+		{ XMFLOAT3(1.0f, -1.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f) },
+		{ XMFLOAT3(-1.0f, -1.0f, 1.0f), XMFLOAT3(0.0f, -1.0f, 0.0f) },
+
+		{ XMFLOAT3(-1.0f, -1.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f) },
+		{ XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f) },
+		{ XMFLOAT3(-1.0f, 1.0f, -1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f) },
+		{ XMFLOAT3(-1.0f, 1.0f, 1.0f), XMFLOAT3(-1.0f, 0.0f, 0.0f) },
+
+		{ XMFLOAT3(1.0f, -1.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+		{ XMFLOAT3(1.0f, -1.0f, -1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+		{ XMFLOAT3(1.0f, 1.0f, -1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+		{ XMFLOAT3(1.0f, 1.0f, 1.0f), XMFLOAT3(1.0f, 0.0f, 0.0f) },
+
+		{ XMFLOAT3(-1.0f, -1.0f, -1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f) },
+		{ XMFLOAT3(1.0f, -1.0f, -1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f) },
+		{ XMFLOAT3(1.0f, 1.0f, -1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f) },
+		{ XMFLOAT3(-1.0f, 1.0f, -1.0f), XMFLOAT3(0.0f, 0.0f, -1.0f) },
+
+		{ XMFLOAT3(-1.0f, -1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f) },
+		{ XMFLOAT3(1.0f, -1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f) },
+		{ XMFLOAT3(1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f) },
+		{ XMFLOAT3(-1.0f, 1.0f, 1.0f), XMFLOAT3(0.0f, 0.0f, 1.0f) },
 	};
 	D3D11_BUFFER_DESC bd;
 	ZeroMemory(&bd, sizeof(D3D11_BUFFER_DESC));
 	bd.Usage = D3D11_USAGE_DEFAULT;				// default로 사용
-	bd.ByteWidth = sizeof(SimpleVertex) * 3;	// vertex 3개
+	bd.ByteWidth = sizeof(SimpleVertex) * 24;	// vertex
 	bd.BindFlags = D3D11_BIND_VERTEX_BUFFER;	// vertex buffer로 바인드
 	bd.CPUAccessFlags = 0;						// cpu access하지 않음.
 
@@ -372,8 +456,61 @@ HRESULT InitDevice()
 	UINT offset = 0;
 	g_pImmediateContext->IASetVertexBuffers(0, 1, &g_pVertexBuffer, &stride, &offset);
 
+	// Create index buffer
+	constexpr WORD indices[] =
+	{
+		3,1,0,
+		2,1,3,
+
+		6,4,5,
+		7,4,6,
+
+		11,9,8,
+		10,9,11,
+
+		14,12,13,
+		15,12,14,
+
+		19,17,16,
+		18,17,19,
+
+		22,20,21,
+		23,20,22
+	};
+	bd.Usage = D3D11_USAGE_DEFAULT;
+	bd.ByteWidth = sizeof(WORD) * 36;
+	bd.BindFlags = D3D11_BIND_INDEX_BUFFER;
+	bd.CPUAccessFlags = 0;
+	initData.pSysMem = indices;
+	hr = g_pDevice->CreateBuffer(&bd, &initData, &g_pIndexBuffer);
+	if (FAILED(hr))
+	{
+		return hr;
+	}
+
+	g_pImmediateContext->IASetIndexBuffer(g_pIndexBuffer, DXGI_FORMAT_R16_UINT, 0);
+
 	// set primitive topology
 	g_pImmediateContext->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+
+	bd.Usage = D3D11_USAGE_DEFAULT;
+	bd.ByteWidth = sizeof(ConstantBuffer);
+	bd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+	bd.CPUAccessFlags = 0;
+	hr = g_pDevice->CreateBuffer(&bd, nullptr, &g_pConstantBuffer);
+	if (FAILED(hr))
+	{
+		return hr;
+	}
+
+	g_World = XMMatrixIdentity();
+
+	XMVECTOR eye = XMVectorSet(0.0f, 4.0f, -10.0f, 0.0f);
+	XMVECTOR at = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+	XMVECTOR up = XMVectorSet(0.0f, 1.0f, 0.0f, 0.0f);
+	g_View = XMMatrixLookAtLH(eye, at, up);
+
+	g_Projection = XMMatrixPerspectiveFovLH(XM_PIDIV4, static_cast<float>(width) / height, 0.01f, 100.0f);
 
 	return S_OK;
 }
@@ -401,12 +538,75 @@ LRESULT CALLBACK WndProc(HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam)
 
 void Render()
 {
+	// Update our time
+	static float t = 0.0f;
+	if (g_driverType == D3D_DRIVER_TYPE_REFERENCE)
+	{
+		t += static_cast<float>(XM_PI) * 0.0125f;
+	}
+	else
+	{
+		static DWORD dwTimeStart = 0;
+		const DWORD dwTimeCur = GetTickCount();
+		if (dwTimeStart == 0)
+			dwTimeStart = dwTimeCur;
+		t = (dwTimeCur - dwTimeStart) / 1000.0f;
+	}
+
+	g_World = XMMatrixRotationY(t);
+
+	XMFLOAT4 vLightDirs[2] =
+	{
+		XMFLOAT4(-0.577f, 0.577f, -0.577f, 1.0f),
+		XMFLOAT4(0.0f, 0.0f, -1.0f, 1.0f),
+	};
+	constexpr XMFLOAT4 vLightColors[2] =
+	{
+		XMFLOAT4(0.5f, 0.5f, 0.5f, 1.0f),
+		XMFLOAT4(0.5f, 0.0f, 0.0f, 1.0f)
+	};
+
+	const XMMATRIX mRotate = XMMatrixRotationY(-2.0f * t);
+	XMVECTOR vLightDir = XMLoadFloat4(&vLightDirs[1]);
+	vLightDir = XMVector3Transform(vLightDir, mRotate);
+	XMStoreFloat4(&vLightDirs[1], vLightDir);
+
 	constexpr float clearColor[4] = { 0.0f, 0.125f,0.3f,1.0f };
 	g_pImmediateContext->ClearRenderTargetView(g_pRenterTargetView, clearColor);
 
+	g_pImmediateContext->ClearDepthStencilView(g_pDepthStencilView, D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+	ConstantBuffer cb;
+	cb.mWorld = XMMatrixTranspose(g_World);
+	cb.mView = XMMatrixTranspose(g_View);
+	cb.mProjection = XMMatrixTranspose(g_Projection);
+	cb.vLightDir[0] = vLightDirs[0];
+	cb.vLightDir[1] = vLightDirs[1];
+	cb.vLightColor[0] = vLightColors[0];
+	cb.vLightColor[1] = vLightColors[1];
+	cb.vOutputColor = XMFLOAT4(0, 0, 0, 0);
+	g_pImmediateContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &cb, 0, 0);
+
 	g_pImmediateContext->VSSetShader(g_pVertexShader, nullptr, 0);
+	g_pImmediateContext->VSSetConstantBuffers(0, 1, &g_pConstantBuffer);
 	g_pImmediateContext->PSSetShader(g_pPixelShader, nullptr, 0);
-	g_pImmediateContext->Draw(3, 0);
+	g_pImmediateContext->PSSetConstantBuffers(0, 1, &g_pConstantBuffer);
+	g_pImmediateContext->DrawIndexed(36, 0, 0);
+
+	for (int m = 0; m < 2; m++)
+	{
+		XMMATRIX mLight = XMMatrixTranslationFromVector(5.0f * XMLoadFloat4(&vLightDirs[m]));
+		XMMATRIX mLightScale = XMMatrixScaling(0.2f, 0.2f, 0.2f);
+		mLight = mLightScale * mLight;
+
+		// Update the world variable to reflect the current light
+		cb.mWorld = XMMatrixTranspose(mLight);
+		cb.vOutputColor = vLightColors[m];
+		g_pImmediateContext->UpdateSubresource(g_pConstantBuffer, 0, nullptr, &cb, 0, 0);
+
+		g_pImmediateContext->PSSetShader(g_pSolidPixelShader, nullptr, 0);
+		g_pImmediateContext->DrawIndexed(36, 0, 0);
+	}
 
 	g_pSwapChain->Present(0, 0);
 }
@@ -418,6 +618,10 @@ void CleanupDevice()
 		g_pImmediateContext->ClearState();
 	}
 
+	if (g_pConstantBuffer)
+	{
+		g_pConstantBuffer->Release();
+	}
 	if (g_pVertexBuffer)
 	{
 		g_pVertexBuffer->Release();
@@ -433,6 +637,18 @@ void CleanupDevice()
 	if (g_pPixelShader)
 	{
 		g_pPixelShader->Release();
+	}
+	if (g_pSolidPixelShader)
+	{
+		g_pSolidPixelShader->Release();
+	}
+	if (g_pDepthStencil)
+	{
+		g_pDepthStencil->Release();
+	}
+	if (g_pDepthStencilView)
+	{
+		g_pDepthStencilView->Release();
 	}
 	if (g_pRenterTargetView)
 	{

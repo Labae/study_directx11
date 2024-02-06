@@ -136,6 +136,8 @@
   </ItemGroup>
   <ItemGroup>
     <FxCompile Include="Tutorial02.fx" />
+    <FxCompile Include="Tutorial04.fx" />
+    <FxCompile Include="Tutorial06.fx" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
